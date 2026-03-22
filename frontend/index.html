@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Medical IR - 1 Mic Test</title>
+    
+    <style>
+        body { font-family: sans-serif; padding: 20px; line-height: 1.6; }
+        #transcript-box { border: 1px solid #ccc; height: 300px; overflow-y: scroll; padding: 10px; background: #f9f9f9; }
+        .speaker-doctor { color: blue; font-weight: bold; }
+        .speaker-patient { color: green; font-weight: bold; }
+        .status { font-weight: bold; margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+
+    <h2>Ambient Clinical Capture (1-Mic)</h2>
+    <div id="status" class="status">Status: Disconnected</div>
+    
+    <button id="start-btn">Start Medical Session</button>
+
+    <h3>Live Transcription Path</h3>
+    <div id="transcript-box"></div>
+
+    <script type="module" src="./main.js"></script>
+</body>
+</html>
