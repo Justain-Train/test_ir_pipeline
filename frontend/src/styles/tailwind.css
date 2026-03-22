@@ -1,0 +1,31 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer utilities {
+	.text-header {
+		font-size: 50px;
+		line-height: 1.1;
+	}
+
+	.text-md {
+		font-size: 20px;
+		line-height: 1.4;
+	}
+
+	.text-lg {
+		font-size: 30px;
+		line-height: 1.2;
+	}
+
+	.text-label {
+		font-size: 10px;
+		font-weight: 600;
+		letter-spacing: 0.16em;
+		text-transform: uppercase;
+	}
+
+	.text-caption {
+		font-size: 11px;
+	}
+}

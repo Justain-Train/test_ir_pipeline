@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  fastapi-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      ASSEMBLYAI_API_KEY: ${ASSEMBLYAI_API_KEY}
+      N8N_WEBHOOK_URL: ${N8N_WEBHOOK_URL}
+    volumes:
+      - ./backend:/app
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    networks:
+      - iris-network
+
+networks:
+  iris-network:
+    driver: bridge
