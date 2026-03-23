@@ -1,10 +1,18 @@
 import { useEffect, useRef, useState, type MutableRefObject } from 'react';
 import { TranscriptionClient } from '../services/transcriptionClient';
+import type { N8nTurnItem, N8nTurnWrapper } from '../types/n8nTurnPayload.types';
 
 export interface SessionPatient {
   id: string;
   name: string;
   age: string;
+}
+
+/** Raw turn captured from the backend transcript_update events */
+interface RawTurn {
+  speaker: string;
+  text: string;
+  timestamp: string;
 }
 
 export type UseLiveTranscriptionResult = {
@@ -15,6 +23,8 @@ export type UseLiveTranscriptionResult = {
   sessionID: string | null;
   error: string | null;
   isFinished: boolean;
+  /** Structured n8n-compatible turn array, populated after session finishes */
+  n8nTurns: N8nTurnWrapper[];
 
   // Methods
   startSession: (patient: SessionPatient) => Promise<void>;
@@ -103,6 +113,58 @@ function stopAudioPipeline(
   return Promise.resolve();
 }
 
+// ============================================================================
+// Role mapping helpers (mirrors offline pipeline)
+// ============================================================================
+
+const ROLE_MAP: Record<string, "CLINICIAN" | "PATIENT"> = {
+  Clinician: "CLINICIAN",
+  Patient: "PATIENT",
+};
+
+/**
+ * Convert the accumulated raw turns into the n8n-compatible item array
+ * that matches the offline pipeline format.
+ */
+function buildN8nTurns(
+  transcriptId: string,
+  turns: RawTurn[]
+): N8nTurnWrapper[] {
+  const createdAt = new Date().toISOString();
+
+  return turns.map((turn, idx) => {
+    const role: "CLINICIAN" | "PATIENT" | "UNKNOWN" =
+      ROLE_MAP[turn.speaker] || "UNKNOWN";
+
+    const item: N8nTurnItem = {
+      transcript_id: transcriptId,
+      created_at: createdAt,
+
+      turn_id: `${transcriptId}_turn_${idx}`,
+      turn_index: idx,
+
+      speaker_label: turn.speaker,
+      role,
+
+      start_ms: null, // live stream doesn't provide ms-level timing
+      end_ms: null,
+      confidence: null,
+
+      text: turn.text,
+
+      combined_text: turn.text,
+      patient_text: role === "PATIENT" ? turn.text : null,
+      clinician_text: role === "CLINICIAN" ? turn.text : null,
+
+      route_combined: true,
+      route_patient: role === "PATIENT",
+      route_clinician: role === "CLINICIAN",
+    };
+
+    return { json: item };
+  });
+}
+
 
 
 export function useLiveTranscription(): UseLiveTranscriptionResult {
@@ -113,6 +175,7 @@ export function useLiveTranscription(): UseLiveTranscriptionResult {
   const [sessionID, setSessionID] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isFinished, setIsFinished] = useState<boolean>(false);
+  const [n8nTurns, setN8nTurns] = useState<N8nTurnWrapper[]>([]);
 
   // Refs
   const clientRef = useRef<TranscriptionClient | null>(null);
@@ -121,6 +184,8 @@ export function useLiveTranscription(): UseLiveTranscriptionResult {
   const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const workletNodeRef = useRef<AudioWorkletNode | null>(null);
   const audioChunkTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Accumulates finalized turns during a live session */
+  const rawTurnsRef = useRef<RawTurn[]>([]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -155,6 +220,11 @@ export function useLiveTranscription(): UseLiveTranscriptionResult {
 
       // Handle transcript updates
       clientRef.current.onTranscriptUpdate = (text: string, isFinal: boolean, speaker: string, timestamp: string) => {
+        // Accumulate finalized turns for n8n payload
+        if (isFinal) {
+          rawTurnsRef.current.push({ speaker, text, timestamp });
+        }
+
         setTranscript((prev) => {
           if (isFinal) {
             // Finalized turn with speaker label — permanent line
@@ -194,6 +264,12 @@ export function useLiveTranscription(): UseLiveTranscriptionResult {
         setIsRecording(false);
         setIsConnected(false);
         setIsFinished(true);
+
+        // Build structured n8n turn array from accumulated turns
+        const transcriptId = clientRef.current?.getSessionID() || 'unknown_transcript';
+        const turns = buildN8nTurns(transcriptId, rawTurnsRef.current);
+        setN8nTurns(turns);
+        console.log('[n8n turns payload]', JSON.stringify(turns, null, 2));
 
         if (!n8nSent) {
           console.warn('Warning: n8n webhook may not have received the transcript');
@@ -331,6 +407,8 @@ export function useLiveTranscription(): UseLiveTranscriptionResult {
       setError(null);
       setTranscript('');
       setIsFinished(false);
+      setN8nTurns([]);
+      rawTurnsRef.current = [];
 
       // Initialize WebSocket client
       await initializeClient(patient);
@@ -394,6 +472,7 @@ export function useLiveTranscription(): UseLiveTranscriptionResult {
     setSessionID(null);
     setError(null);
     setIsFinished(false);
+    setN8nTurns([]);
 
     // Reset refs
     clientRef.current = null;
@@ -401,6 +480,7 @@ export function useLiveTranscription(): UseLiveTranscriptionResult {
     mediaStreamRef.current = null;
     sourceNodeRef.current = null;
     workletNodeRef.current = null;
+    rawTurnsRef.current = [];
   };
 
   return {
@@ -410,6 +490,7 @@ export function useLiveTranscription(): UseLiveTranscriptionResult {
     sessionID,
     error,
     isFinished,
+    n8nTurns,
     startSession,
     finishSession,
     resetSession,

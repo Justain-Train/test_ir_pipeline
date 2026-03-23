@@ -167,7 +167,7 @@ export default function LiveSession() {
             )}
 
             <SessionActions
-              isStartDisabled={isStartDisabled}
+              isStartDisabled={isStartDisabled || isRecording || isFinished}
               onCancel={handleCancel}
               onStartSession={handleStartSession}
             />

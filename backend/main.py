@@ -35,10 +35,10 @@ N8N_WEBHOOK_URL = os.getenv(
     "https://your-n8n-instance/webhook/transcript"
 )
 ASSEMBLYAI_WS_BASE_URL = "wss://streaming.assemblyai.com/v3/ws"
-
+ASSEMBLYAI_SPEECH_MODEL = os.getenv("ASSEMBLYAI_SPEECH_MODEL", "u3-rt-pro")
 ASSEMBLYAI_WS_PARAMS = {
     "sample_rate": 16000,
-    "speech_model": "universal-streaming-english",
+    "speech_model": ASSEMBLYAI_SPEECH_MODEL,
     "format_turns": "true",
     "end_of_turn_confidence_threshold": 0.4,
     "min_end_of_turn_silence_when_confident": 400,
@@ -144,7 +144,7 @@ async def connect_to_assemblyai(session_id: str):
 
         ws = await websockets.connect(
             ASSEMBLYAI_WS_URL,
-            extra_headers={"Authorization": ASSEMBLYAI_API_KEY},
+            additional_headers={"Authorization": ASSEMBLYAI_API_KEY},
             ping_interval=20,
             ping_timeout=20,
             compression=None,
@@ -314,18 +314,50 @@ async def send_to_n8n(
     patient_id: str,
     patient_name: str,
     patient_age: int,
-    final_transcript: str
+    final_transcript: str,
+    turns: list[dict],
 ) -> bool:
     """
     Send final transcript to n8n webhook.
+    Includes a structured per-turn JSON array that matches the offline pipeline
+    so downstream n8n workflows can iterate the same schema.
     Returns True on success, False on failure.
     """
+    created_at = datetime.now().isoformat() + "Z"
+
+    # Build the per-turn items that mirror the offline pipeline output
+    n8n_items = []
+    role_map = {"Clinician": "CLINICIAN", "Patient": "PATIENT"}
+    for idx, turn in enumerate(turns):
+        speaker = turn.get("speaker", "Speaker")
+        role = role_map.get(speaker, "UNKNOWN")
+        text = turn.get("text", "")
+        n8n_items.append({
+            "transcript_id": session_id,
+            "created_at": created_at,
+            "turn_id": f"{session_id}_turn_{idx}",
+            "turn_index": idx,
+            "speaker_label": speaker,
+            "role": role,
+            "start_ms": None,
+            "end_ms": None,
+            "confidence": None,
+            "text": text,
+            "combined_text": text,
+            "patient_text": text if role == "PATIENT" else None,
+            "clinician_text": text if role == "CLINICIAN" else None,
+            "route_combined": True,
+            "route_patient": role == "PATIENT",
+            "route_clinician": role == "CLINICIAN",
+        })
+
     payload = {
         "patientID": patient_id,
         "name": patient_name,
         "age": patient_age,
         "final_transcript": final_transcript,
-        "timestamp": datetime.now().isoformat() + "Z",
+        "turns": n8n_items,
+        "timestamp": created_at,
         "sessionID": session_id,
     }
     
@@ -527,14 +559,16 @@ async def websocket_endpoint(websocket: WebSocket):
                 if session:
                     final_transcript = sessions.get_final_transcript(session_id)
                     patient = session["patient"]
+                    diarized_lines = session.get("diarized_lines", [])
                     
-                    # Send to n8n
+                    # Send to n8n (includes structured per-turn items)
                     success = await send_to_n8n(
                         session_id=session_id,
                         patient_id=patient.get("patientID", ""),
                         patient_name=patient.get("name", ""),
                         patient_age=patient.get("age", 0),
                         final_transcript=final_transcript,
+                        turns=diarized_lines,
                     )
                     
                     # Notify frontend
