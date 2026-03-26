@@ -42,7 +42,7 @@ export default function LiveSession() {
   const [startedPatient, setStartedPatient] = useState<SessionPatient | null>(null);
 
   // Use the transcription hook
-  const { transcript, isRecording, isFinished, error, startSession: startTranscription, finishSession: finishTranscription, resetSession } = useLiveTranscription();
+  const { transcript, isRecording, isFinished, error, sessionID, startSession: startTranscription, finishSession: finishTranscription, resetSession } = useLiveTranscription();
 
   const selectedExistingPatient = useMemo(
     () => EXISTING_PATIENTS.find((patient) => patient.id === selectedExistingId) ?? null,
@@ -166,6 +166,9 @@ export default function LiveSession() {
               </div>
             )}
 
+            
+
+
             <SessionActions
               isStartDisabled={isStartDisabled || isRecording || isFinished}
               onCancel={handleCancel}
@@ -181,6 +184,7 @@ export default function LiveSession() {
             isRecording={isRecording}
             isFinished={isFinished}
             error={error}
+            sessionID={sessionID}
             onFinishSession={handleFinishSession}
           />
         ) : null}

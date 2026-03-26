@@ -7,7 +7,6 @@ import audioIcon from '@/public/audioicon.svg';
 const primaryNavItems = [
 
     { label: 'New Session', src: '/live-session', icon: newSessionIcon },
-    { label: 'Upload Audio', src: '/upload-audio', icon: audioIcon },
 ];
 
 export default function Sidebar() {

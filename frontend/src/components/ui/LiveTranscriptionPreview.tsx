@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Button } from './Button';
+import { SessionSummary } from './SessionSummary';
 
 type SessionPatient = {
   id: string;
@@ -13,6 +14,7 @@ type LiveTranscriptionPreviewProps = {
   isRecording: boolean;
   isFinished: boolean;
   error: string | null;
+  sessionID: string | null;
   onFinishSession: () => Promise<void>;
 };
 
@@ -22,6 +24,7 @@ export function LiveTranscriptionPreview({
   isRecording,
   isFinished,
   error,
+  sessionID,
   onFinishSession,
 }: LiveTranscriptionPreviewProps) {
   const [isFinishing, setIsFinishing] = useState(false);
@@ -99,6 +102,11 @@ export function LiveTranscriptionPreview({
           <p className="text-sm font-medium text-green-700">Session finished successfully!</p>
           <p className="mt-1 text-xs text-green-600">Transcript sent to n8n webhook.</p>
         </div>
+      )}
+
+      {/* AI Summary — available after session finishes */}
+      {isFinished && transcript && (
+        <SessionSummary transcript={transcript} transcriptId={sessionID} />
       )}
     </section>
   );

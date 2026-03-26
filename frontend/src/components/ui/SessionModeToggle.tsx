@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/Button';
+import UploadAudio from '@/components/UploadAudio';
 
 type SessionModeToggleProps = {
   mode: 'existing' | 'new';
@@ -10,7 +11,7 @@ export function SessionModeToggle({ mode, onExistingClick, onNewClick }: Session
   return (
     <div className="space-y-3">
       <label className="block text-sm font-medium text-slate-700">Patient Type</label>
-      <div className="flex flex-wrap gap-3">
+      <div className="flex flex-wrap items-start gap-3">
         <Button
           type="button"
           variant={mode === 'existing' ? 'primary' : 'secondary'}
@@ -25,6 +26,11 @@ export function SessionModeToggle({ mode, onExistingClick, onNewClick }: Session
         >
           New Patient
         </Button>
+
+        {/* Push upload button to the far right */}
+        <div className="ml-auto">
+          <UploadAudio />
+        </div>
       </div>
     </div>
   );
