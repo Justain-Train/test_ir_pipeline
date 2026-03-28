@@ -1,7 +1,6 @@
-# Iris — Real-time Medical Transcription Pipeline
+# Iris — Real-Time Clinical Interview Transcription & AI Summary
 
-A real-time clinical transcription and information retrieval pipeline.  
-A **React + Vite** frontend captures microphone audio, streams it over a **WebSocket** to a **FastAPI** backend, which proxies it to **AssemblyAI Streaming v3** (`u3-rt-pro` model) for diarized speech-to-text, then delivers a structured per-turn transcript to an **n8n** webhook for downstream AI processing.
+A full-stack application for real-time clinical interview transcription with speaker diarization, AI-powered summaries, and doctor follow-up Q&A — all powered by AssemblyAI, n8n workflows, and Groq.
 
 ---
 
@@ -9,143 +8,215 @@ A **React + Vite** frontend captures microphone audio, streams it over a **WebSo
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  BROWSER  (React 18 · Vite · TailwindCSS)                      │
+│                        FRONTEND (React + Vite)                  │
 │                                                                 │
-│  Mic → AudioWorklet (PCM 16-bit 16 kHz) ──► WebSocket client   │
-│                                              │                  │
-│  LiveTranscriptionPreview  ◄── transcript_update (JSON)         │
-└───────────────────────────────────┬─────────────────────────────┘
-                                    │ ws://…/ws/session
-                                    ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  BACKEND  (FastAPI · Uvicorn)                                   │
-│                                                                 │
-│  WebSocket handler                                              │
-│    ├─ start_session  → creates session, opens AssemblyAI WS     │
-│    ├─ binary frames  → forwards PCM audio to AssemblyAI         │
-│    └─ finish_session → terminates AAI, builds turns, POSTs n8n  │
-│                                                                 │
-│  AssemblyAI Streaming v3  (u3-rt-pro)                           │
-│    └─ Turn messages with speaker_labels → diarized transcript   │
-└───────────────────────────────────┬─────────────────────────────┘
-                                    │ HTTP POST (JSON)
-                                    ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  n8n  (webhook)                                                 │
-│                                                                 │
-│  Receives per-turn structured JSON:                             │
-│    turns[] → combined_text / patient_text / clinician_text      │
-│  Loop over items → route to downstream AI nodes                 │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### Project Structure
-
-```
-├── backend/
-│   ├── main.py              # FastAPI app — WebSocket handler, AAI proxy, n8n sender
-│   ├── requirements.txt     # Python dependencies
-│   ├── Dockerfile           # Container image
-│   ├── .env.example         # Environment template
-│   └── test_validation.py   # WebSocket integration smoke-test
-├── frontend/
-│   ├── src/
-│   │   ├── components/      # React UI (LiveSession, SessionActions, …)
-│   │   ├── hooks/
-│   │   │   └── useLiveTranscription.ts   # Audio capture + WS client hook
-│   │   ├── services/
-│   │   │   └── transcriptionClient.ts    # WebSocket protocol client
-│   │   ├── types/
-│   │   │   └── n8nTurnPayload.types.ts   # Structured turn types
-│   │   └── styles/          # TailwindCSS
-│   ├── package.json
-│   ├── vite.config.js
-│   └── .env.example
-├── docker-compose.yml
-├── setup.sh / setup.ps1
-└── README.md
+│  ┌──────────────┐  ┌──────────────┐  ┌────────────────────────┐ │
+│  │  Dashboard    │  │ New Session  │  │  Upload Audio (offline)│ │
+│  │  (HomePage)   │  │ (LiveSession)│  │  → n8n webhook         │ │
+│  └──────────────┘  └──────┬───────┘  └────────────────────────┘ │
+│                           │                                     │
+│           WebSocket       │   HTTP POST                         │
+│           (audio stream)  │   (summary / Q&A)                   │
+└───────────────────────────┼─────────────────────────────────────┘
+                            │
+              ┌─────────────┼─────────────────────┐
+              │             ▼                     │
+              │     BACKEND (FastAPI)             │
+              │                                   │
+              │  ┌─────────────────────────┐      │
+              │  │  WebSocket /ws/session   │      │
+              │  │  • Receives PCM audio    │      │
+              │  │  • Streams to AssemblyAI │      │
+              │  │  • Speaker diarization   │      │
+              │  │  • Returns turns live    │      │
+              │  └────────────┬────────────┘      │
+              │               │                   │
+              └───────────────┼───────────────────┘
+                              │
+                 ┌────────────┼────────────────┐
+                 │            ▼                │
+                 │   AssemblyAI v3 Streaming   │
+                 │   Model: u3-rt-pro          │
+                 │   • Real-time transcription │
+                 │   • Speaker labels (A/B)    │
+                 │   • Turn-based diarization  │
+                 └────────────┬────────────────┘
+                              │
+              ┌───────────────┼───────────────────┐
+              │               ▼                   │
+              │          n8n Workflows            │
+              │                                   │
+              │  ┌──────────────────────────────┐ │
+              │  │  Summary Webhook             │ │
+              │  │  POST { transcript }          │ │
+              │  │  → Groq LLM → summary_text   │ │
+              │  └──────────────────────────────┘ │
+              │                                   │
+              │  ┌──────────────────────────────┐ │
+              │  │  Q&A Webhook                 │ │
+              │  │  POST { question,            │ │
+              │  │    transcript_id, scope, k } │ │
+              │  │  → Supabase RAG → Groq LLM  │ │
+              │  │  → answer_text               │ │
+              │  └──────────────────────────────┘ │
+              │                                   │
+              │  ┌──────────────────────────────┐ │
+              │  │  Upload Webhook              │ │
+              │  │  POST multipart/form-data    │ │
+              │  │  → AssemblyAI offline        │ │
+              │  │  → Supabase storage          │ │
+              │  └──────────────────────────────┘ │
+              │                                   │
+              │  ┌──────────────────────────────┐ │
+              │  │  Transcript Delivery Webhook │ │
+              │  │  POST { session_id,          │ │
+              │  │    patient_*, transcript,     │ │
+              │  │    turns[] }                 │ │
+              │  └──────────────────────────────┘ │
+              └───────────────────────────────────┘
 ```
 
 ---
 
-## Features
+## Project Structure
 
-- **Single-microphone ambient capture** via `AudioWorklet` — 16 kHz PCM, sent as raw binary WebSocket frames (zero base64 overhead)
-- **Real-time streaming STT** through AssemblyAI v3 with the `u3-rt-pro` speech model
-- **Speaker diarization** — speakers mapped to **Clinician** / **Patient** roles
-- **Live transcript preview** in the browser with partial (in-progress) and final (committed) turns
-- **Structured n8n turn payload** — each turn emitted as `{ transcript_id, role, combined_text, patient_text, clinician_text, route_* }`, identical schema to the offline audio pipeline so the same n8n workflow handles both
-- **Session lifecycle** — Start → Record → Finish, with UI state management (disabled buttons, recording indicator)
-- **Docker-ready** with `docker-compose.yml`
+```
+test_ir_pipeline-1/
+├── README.md
+├── docker-compose.yml
+│
+├── backend/
+│   ├── main.py                    # FastAPI server + WebSocket handler
+│   ├── requirements.txt           # Python dependencies
+│   ├── Dockerfile                 # Backend container
+│   ├── .env                       # Runtime config (not committed)
+│   ├── .env.example               # Config template
+│   └── test_validation.py         # Backend tests
+│
+└── frontend/
+    ├── index.html                 # Vite entry point
+    ├── package.json               # Node dependencies
+    ├── vite.config.js             # Vite bundler config
+    ├── tailwind.config.js         # Tailwind CSS config
+    ├── postcss.config.js          # PostCSS config
+    ├── tsconfig.json              # TypeScript config
+    ├── .env                       # Runtime config (not committed)
+    ├── .env.example               # Config template
+    │
+    └── src/
+        ├── main.tsx               # React entry point
+        ├── vite-env.d.ts          # Vite type declarations
+        ├── svg.d.ts               # SVG import types
+        │
+        ├── components/
+        │   ├── AppLayout.tsx          # Shell layout with sidebar
+        │   ├── IrisDashboard.tsx      # Dashboard view
+        │   ├── LiveSession.tsx        # Live session orchestrator
+        │   ├── PatientRecordCard.tsx   # Patient info card
+        │   ├── Sidebar.tsx            # Navigation sidebar
+        │   ├── StartSessionButton.tsx  # Start session entry point
+        │   ├── UploadAudio.tsx        # Offline audio upload to n8n
+        │   │
+        │   └── ui/
+        │       ├── Badge.tsx                  # Generic badge
+        │       ├── Button.tsx                 # Reusable button
+        │       ├── Card.tsx                   # Card container
+        │       ├── EntityPill.tsx             # Entity tag pill
+        │       ├── ExistingPatientPicker.tsx   # Patient dropdown
+        │       ├── FormField.tsx              # Form input wrapper
+        │       ├── Header.tsx                 # Page header
+        │       ├── LiveTranscriptionPreview.tsx # Live transcript display
+        │       ├── NewPatientModal.tsx         # New patient form modal
+        │       ├── RiskBadge.tsx              # Risk level badge
+        │       ├── Section.tsx                # Section wrapper
+        │       ├── SectionLabel.tsx           # Section label
+        │       ├── SessionActions.tsx         # Start/Finish/Cancel buttons
+        │       ├── SessionModeToggle.tsx      # Existing/New patient toggle
+        │       ├── SessionSummary.tsx         # AI summary + Q&A panel
+        │       ├── SidebarNavItem.tsx         # Sidebar nav link
+        │       ├── StatusBadge.tsx            # Status indicator
+        │       └── StatusBanner.tsx           # Connection status banner
+        │
+        ├── hooks/
+        │   └── useLiveTranscription.ts    # WebSocket + transcription state
+        │
+        ├── lib/
+        │   ├── constants.ts               # App-wide constants
+        │   └── env.ts                     # Environment variable helpers
+        │
+        ├── pages/
+        │   ├── HomePage.tsx               # Dashboard page
+        │   └── NewSessionPage.tsx         # New session page
+        │
+        ├── public/
+        │   ├── audioicon.svg              # Audio nav icon
+        │   ├── dashboardicon.svg          # Dashboard nav icon
+        │   └── newsessionicon.svg         # New session nav icon
+        │
+        ├── services/
+        │   └── transcriptionClient.ts     # WebSocket client service
+        │
+        ├── styles/
+        │   └── tailwind.css               # Global styles
+        │
+        ├── tests/
+        │   ├── livekitTokenService.test.ts    # Legacy tests
+        │   └── useLivekitSession.test.tsx     # Legacy tests
+        │
+        └── types/
+            ├── n8nTurnPayload.types.ts        # n8n turn JSON schema
+            ├── sessionPayload.types.ts        # Session payload types
+            └── transcriptPayload.types.ts     # Transcript payload types
+```
 
 ---
 
 ## Tech Stack
 
-| Layer | Technology |
-|---|---|
-| Frontend | React 18 · TypeScript · Vite · TailwindCSS |
-| Audio | `AudioWorkletNode` · PCM s16le @ 16 kHz |
-| Transport | Native WebSocket (binary frames) |
-| Backend | Python 3.11 · FastAPI · Uvicorn |
-| STT | AssemblyAI Streaming v3 (`u3-rt-pro`) |
-| Automation | n8n (webhook receiver) |
-| Infra | Docker · Docker Compose |
+| Layer | Technology | Purpose |
+|-------|-----------|---------|
+| **Frontend** | React 18, TypeScript, Vite | UI framework |
+| **Styling** | Tailwind CSS | Utility-first CSS |
+| **Backend** | Python, FastAPI, uvicorn | WebSocket server |
+| **Transcription** | AssemblyAI v3 Streaming (`u3-rt-pro`) | Real-time speech-to-text with speaker diarization |
+| **AI Summaries** | Groq LLM (via n8n) | Clinical interview summarisation |
+| **RAG Retrieval** | Supabase (via n8n) | Vector search for Q&A context |
+| **Orchestration** | n8n | Workflow automation for summaries, Q&A, uploads |
+| **Containerisation** | Docker, Docker Compose | Deployment |
 
 ---
 
-## Setup
+## Features
 
-### Prerequisites
+### Real-Time Transcription
+- Live audio capture from browser microphone (PCM 16-bit, 16kHz)
+- Streamed via WebSocket to FastAPI backend → AssemblyAI v3
+- Speaker diarization with Clinician/Patient role mapping
+- Turn-by-turn transcript display with timestamps
 
-- **Python 3.10+**
-- **Node.js 18+** & npm
-- An **AssemblyAI** API key ([assemblyai.com](https://www.assemblyai.com/))
-- An **n8n** instance with a webhook trigger
+### Patient Management
+- Select from existing patients or create new ones
+- Patient ID, name, and age tracked per session
 
-### 1. Clone & configure environment
+### AI Summary (Post-Session)
+- After finishing a session, generate an AI summary of the interview
+- Full transcript sent to n8n → Groq LLM
+- Summary displayed in a clean card below the transcript
 
-```bash
-# Backend
-cp backend/.env.example backend/.env
-# → fill in ASSEMBLYAI_API_KEY and N8N_WEBHOOK_URL
+### Doctor Q&A (Post-Session)
+- Ask follow-up questions about the interview after it ends
+- Question + transcript_id sent to n8n → Supabase RAG → Groq LLM
+- Answers displayed with supporting evidence turns
+- Full Q&A history preserved in scrollable list
 
-# Frontend
-cp frontend/.env.example frontend/.env
-# → adjust VITE_BACKEND_URL if not running locally
-```
+### Offline Audio Upload
+- Upload pre-recorded audio files (.wav, .mp3, .m4a, .ogg, .webm, .flac, .mp4)
+- Files sent to n8n webhook for offline AssemblyAI transcription
+- Input validation: file type, max 100MB, non-empty
 
-### 2. Backend
-
-```bash
-cd backend
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-python main.py
-```
-
-The API will be available at **http://localhost:8000**.
-
-Or use the setup helper:
-```bash
-bash setup.sh
-```
-
-### 3. Frontend
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-Opens at **http://localhost:5173** (Vite default).
-
-### 4. Docker (optional)
-
-```bash
-docker compose up --build
-```
+### n8n Integration
+- Structured per-turn JSON sent on session finish (matches offline pipeline schema)
+- Separate webhooks for: transcript delivery, summary, Q&A, audio upload
 
 ---
 
@@ -153,126 +224,211 @@ docker compose up --build
 
 ### Backend (`backend/.env`)
 
-| Variable | Required | Description |
-|---|---|---|
-| `ASSEMBLYAI_API_KEY` | ✅ | Your AssemblyAI API key |
-| `ASSEMBLYAI_SPEECH_MODEL` | — | Speech model (default: `u3-rt-pro`) |
-| `ASSEMBLYAI_SAMPLE_RATE` | — | Sample rate (default: `16000`) |
-| `N8N_WEBHOOK_URL` | ✅ | n8n webhook endpoint to receive transcripts |
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `ASSEMBLYAI_API_KEY` | ✅ | — | AssemblyAI API key |
+| `ASSEMBLYAI_SAMPLE_RATE` | ❌ | `16000` | Audio sample rate |
+| `ASSEMBLYAI_SPEECH_MODEL` | ❌ | `u3-rt-pro` | AssemblyAI streaming model |
+| `ASSEMBLYAI_ENCODING` | ❌ | `pcm_s16le` | Audio encoding format |
+| `N8N_WEBHOOK_URL` | ❌ | — | n8n webhook for final transcript delivery |
 
 ### Frontend (`frontend/.env`)
 
-| Variable | Required | Description |
-|---|---|---|
-| `VITE_BACKEND_URL` | — | Backend WebSocket URL (default: `ws://localhost:8000/ws/session`) |
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `VITE_BACKEND_URL` | ✅ | `ws://localhost:8000/ws/session` | Backend WebSocket URL |
+| `VITE_N8N_UPLOAD_WEBHOOK_URL` | ❌ | — | n8n webhook for audio file uploads |
+| `VITE_N8N_SUMMARY_WEBHOOK_URL` | ❌ | — | n8n webhook for AI summary generation |
+| `VITE_N8N_QA_WEBHOOK_URL` | ❌ | — | n8n webhook for doctor follow-up Q&A |
 
 ---
 
-## Usage
+## Getting Started
 
-1. Open the frontend and select or create a patient
-2. Click **Start Session** — the button disables, microphone activates, and audio streams to the backend
-3. Speak — live partial and final turns appear in the transcript pane with speaker labels (Clinician / Patient)
-4. Click **Finish Session** — audio stops, the backend sends the full structured transcript to n8n
-5. The n8n webhook receives the payload and can loop over `turns[]` to extract `combined_text`, `patient_text`, and `clinician_text`
+### Prerequisites
+
+- **Node.js** ≥ 18
+- **Python** ≥ 3.10
+- **AssemblyAI** API key ([get one here](https://www.assemblyai.com/dashboard/signup))
+- **n8n** instance (local or cloud) with workflows configured
+
+### Backend Setup
+
+```bash
+cd backend
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+# Configure environment
+cp .env.example .env
+# Edit .env with your AssemblyAI API key and n8n webhook URL
+
+# Run
+python main.py
+# Server starts on http://localhost:8000
+```
+
+### Frontend Setup
+
+```bash
+cd frontend
+npm install
+
+# Configure environment
+cp .env.example .env
+# Edit .env with your webhook URLs
+
+# Run
+npm run dev
+# App starts on http://localhost:5173
+```
+
+### Docker Compose
+
+```bash
+docker-compose up --build
+# Backend: http://localhost:8000
+# Frontend: http://localhost:5173
+```
 
 ---
 
 ## WebSocket Protocol
 
-All communication happens over a single WebSocket at `/ws/session`.
-
 ### Client → Server
 
-| Message | Format |
-|---|---|
-| Start session | `{"type": "start_session", "patient": {"name": "…", "age": 42, "patientID": "…"}}` |
-| Audio | Raw binary frame (Int16 PCM LE, 16 kHz mono) |
-| Finish session | `{"type": "finish_session"}` |
+| Message | Description |
+|---------|-------------|
+| `{ "type": "start_session", "patient_id": "...", "patient_name": "...", "patient_age": 42 }` | Start a new transcription session |
+| `{ "type": "audio_data", "data": "<base64 PCM>" }` | Stream audio chunk |
+| `{ "type": "finish_session" }` | End session, trigger final transcript + n8n delivery |
+| `{ "type": "cancel_session" }` | Cancel session without saving |
 
 ### Server → Client
 
 | Message | Description |
-|---|---|
-| `session_started` | `{"type": "session_started", "sessionID": "uuid"}` |
-| `transcript_update` | `{"type": "transcript_update", "text": "…", "speaker": "Clinician", "timestamp": "01:23", "is_final": true}` |
-| `session_finished` | `{"type": "session_finished", "sessionID": "…", "final_transcript": "…", "n8n_sent": true}` |
-| `error` | `{"type": "error", "message": "…"}` |
+|---------|-------------|
+| `{ "type": "session_started", "session_id": "..." }` | Session confirmed |
+| `{ "type": "transcript_update", "text": "...", "speaker": "A", "is_final": true }` | Live transcript turn |
+| `{ "type": "session_finished", "final_transcript": "...", "n8n_status": "sent" }` | Session complete |
+| `{ "type": "session_cancelled" }` | Session cancelled |
+| `{ "type": "error", "message": "..." }` | Error message |
 
 ---
 
-## n8n Webhook Payload
+## n8n Webhook Payloads
 
-When a session finishes, the backend POSTs this JSON to your n8n webhook:
+### Transcript Delivery (on session finish)
 
 ```json
 {
-  "patientID": "PT-1032",
-  "name": "Ava Brown",
-  "age": 42,
-  "final_transcript": "[00:05] Clinician: \"What brings you in today?\"\n[00:12] Patient: \"I've had chest pain for two days.\"",
+  "session_id": "sess_abc123",
+  "patient_id": "PT-1032",
+  "patient_name": "Ava Brown",
+  "patient_age": 42,
+  "created_at": "2026-03-27T14:30:00.000Z",
+  "final_transcript": "[00:05] Clinician: \"What brings you in today?\" ...",
   "turns": [
     {
-      "transcript_id": "session-uuid",
-      "created_at": "2026-03-23T10:00:00.000Z",
-      "turn_id": "session-uuid_turn_0",
-      "turn_index": 0,
-      "speaker_label": "Clinician",
-      "role": "CLINICIAN",
-      "start_ms": null,
-      "end_ms": null,
-      "confidence": null,
-      "text": "What brings you in today?",
-      "combined_text": "What brings you in today?",
-      "patient_text": null,
-      "clinician_text": "What brings you in today?",
-      "route_combined": true,
-      "route_patient": false,
-      "route_clinician": true
+      "json": {
+        "transcript_id": "sess_abc123",
+        "turn_id": "sess_abc123_turn_0",
+        "turn_index": 0,
+        "speaker_label": "A",
+        "role": "CLINICIAN",
+        "text": "What brings you in today?",
+        "combined_text": "What brings you in today?",
+        "patient_text": null,
+        "clinician_text": "What brings you in today?",
+        "route_combined": true,
+        "route_patient": false,
+        "route_clinician": true
+      }
     }
-  ],
-  "timestamp": "2026-03-23T10:05:00.000Z",
-  "sessionID": "session-uuid"
+  ]
 }
 ```
 
-This matches the offline audio pipeline schema, so a single n8n workflow can handle both live and offline transcripts by looping over `turns[]`.
+### Summary Request
+
+```json
+{ "transcript": "[00:05] Clinician: \"What brings you in?\" ..." }
+```
+
+### Summary Response
+
+```json
+{
+  "summary_text": "The patient presented with persistent headaches...",
+  "transcript": "...",
+  "safety_note": "Educational use only. No diagnosis or treatment recommendation."
+}
+```
+
+### Q&A Request
+
+```json
+{
+  "question": "What medications were discussed?",
+  "scope": "combined",
+  "k": 5,
+  "transcript_id": "sess_abc123"
+}
+```
+
+### Q&A Response
+
+```json
+{
+  "question": "What medications were discussed?",
+  "scope": "combined",
+  "k": 5,
+  "answer_text": "The clinician asked about current medications...",
+  "supporting_turns": [
+    {
+      "rank": 1,
+      "role": "CLINICIAN",
+      "turn_id": "sess_abc123_turn_3",
+      "turn_index": 3,
+      "start_ms": 15000,
+      "end_ms": 22000,
+      "content": "Are you currently taking any medications?"
+    }
+  ],
+  "safety_note": "Educational use only. No diagnosis or treatment recommendation."
+}
+```
 
 ---
 
-## API Endpoints
+## Usage Flow
 
-| Method | Path | Description |
-|---|---|---|
-| `WS` | `/ws/session` | Real-time transcription WebSocket |
-| `GET` | `/health` | Health check (`{"status": "ok"}`) |
+1. **Navigate** to "New Session" in the sidebar
+2. **Select** an existing patient or create a new one
+3. **Click** "Start Session" — microphone access is requested
+4. **Speak** — the transcript appears in real-time with speaker labels
+5. **Click** "Finish Session" — transcript is finalised and sent to n8n
+6. **Generate Summary** — click to get an AI-powered interview summary
+7. **Ask Questions** — type follow-up questions and get RAG-powered answers
+8. **Upload Audio** (optional) — upload a pre-recorded interview file for offline processing
 
 ---
 
 ## Troubleshooting
 
-### No audio / "Waiting for audio…" forever
-- Check browser microphone permissions
-- Ensure the backend is running and reachable at the `VITE_BACKEND_URL`
-- Open DevTools → Console for WebSocket errors
-
-### AssemblyAI connection fails
-- Verify `ASSEMBLYAI_API_KEY` is set and valid in `backend/.env`
-- Check backend logs for `Failed to connect to AssemblyAI` messages
-- Ensure you have network access to `wss://streaming.assemblyai.com`
-
-### n8n not receiving data
-- Confirm `N8N_WEBHOOK_URL` is correct and the n8n workflow is **active**
-- Test the webhook URL with `curl -X POST <url> -H "Content-Type: application/json" -d '{}'`
-- Check backend logs for HTTP status codes
-
-### Speaker labels showing "Speaker" instead of Clinician/Patient
-- AssemblyAI needs enough audio context to distinguish speakers
-- Ensure `speaker_labels` is enabled (it is by default)
-- Longer conversations improve diarization accuracy
+| Issue | Solution |
+|-------|----------|
+| **Microphone not working** | Check browser permissions. Chrome requires HTTPS in production. |
+| **WebSocket connection failed** | Verify `VITE_BACKEND_URL` points to the running backend. Check CORS settings. |
+| **No speaker labels** | AssemblyAI `u3-rt-pro` model supports diarization. Ensure two distinct speakers are present. |
+| **Summary returns empty** | Verify n8n workflow is active. Check that the "Respond to Webhook" node is configured and the Webhook node's Respond is set to "Using Respond to Webhook Node". |
+| **Q&A returns empty** | Same as above. Also verify Supabase has indexed turns for the transcript_id. |
+| **JSON parse error** | n8n is returning an empty body. Ensure the Webhook trigger's "Respond" setting is "Using Respond to Webhook Node", not "Immediately". |
+| **Audio upload rejected** | File must be an audio type (.wav, .mp3, .m4a, .ogg, .webm, .flac, .mp4) and under 100MB. |
 
 ---
 
 ## License
 
-MIT
+This project is for educational and research purposes.
