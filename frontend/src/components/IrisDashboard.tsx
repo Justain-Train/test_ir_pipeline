@@ -1,6 +1,5 @@
 
 import { Section } from '@/components/ui/Section';
-import { PatientRecordCard } from '@/components/PatientRecordCard';
 import Header from '@/components/ui/Header';
 
 export function IrisDashboard() {
@@ -12,8 +11,7 @@ export function IrisDashboard() {
             subtitle="High level Overview of Your Patients"
             className="flex min-h-0 flex-1 flex-col ">
             <div className="flex-1 overflow-y-auto">
-              <PatientRecordCard />
-              <PatientRecordCard />
+
             </div>
           </Section>
     </main>
