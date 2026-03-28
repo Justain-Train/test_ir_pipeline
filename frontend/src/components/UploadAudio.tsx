@@ -1,5 +1,6 @@
 import { useRef, useState, type ChangeEvent } from 'react';
 import { Button } from '@/components/ui/Button';
+import { FileUploadSummary } from '@/components/FileUploadSummary';
 
 const ACCEPTED_AUDIO_TYPES = [
   'audio/wav',
@@ -28,6 +29,8 @@ export default function UploadAudio() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
+  const [transcript, setTranscript] = useState<string | null>(null);
+  const [showSummary, setShowSummary] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const isUploading = status === 'uploading';
@@ -37,6 +40,8 @@ export default function UploadAudio() {
     setErrorMessage(null);
     setSuccessMessage(null);
     setFileName(null);
+    setTranscript(null);
+    setShowSummary(false);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -105,8 +110,34 @@ export default function UploadAudio() {
         throw new Error(`Upload failed with status ${response.status}`);
       }
 
+      // Try to parse the response to get transcript
+      let responseData;
+      try {
+        const responseText = await response.text();
+        if (responseText.trim()) {
+          responseData = JSON.parse(responseText);
+        }
+      } catch {
+        // Response might not be JSON, that's OK
+      }
+
+      // Extract transcript from response (N8N may return it in different formats)
+      const trans =
+        responseData?.transcript ||
+        responseData?.text ||
+        responseData?.final_transcript ||
+        responseData?.[0]?.transcript ||
+        responseData?.[0]?.text ||
+        responseData?.[0]?.final_transcript ||
+        '';
+
+      if (trans) {
+        setTranscript(trans);
+        setShowSummary(true);
+      }
+
       setStatus('success');
-      setSuccessMessage(`"${file.name}" uploaded successfully! Your transcript is being processed by the pipeline.`);
+      setSuccessMessage(`"${file.name}" uploaded successfully! Processing transcript...`);
     } catch (err) {
       setStatus('error');
       setErrorMessage(
@@ -139,36 +170,59 @@ export default function UploadAudio() {
         disabled={isUploading}
       />
 
-      <Button
-        type="button"
-        variant="secondary"
-        disabled={isUploading}
-        onClick={handleButtonClick}
-      >
-        {isUploading
-          ? 'Uploading…'
-          : status === 'success'
-            ? 'Upload Another'
-            : 'Upload Audio'}
-      </Button>
+      {showSummary && transcript ? (
+        <>
+          <FileUploadSummary
+            transcript={transcript}
+            filename={fileName || 'Unknown'}
+            onClose={() => {
+              resetState();
+              fileInputRef.current?.click();
+            }}
+          />
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={resetState}
+            className="w-full"
+          >
+            Close
+          </Button>
+        </>
+      ) : (
+        <>
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={isUploading}
+            onClick={handleButtonClick}
+          >
+            {isUploading
+              ? 'Uploading…'
+              : status === 'success'
+                ? 'Upload Another'
+                : 'Upload Audio'}
+          </Button>
 
-      {/* File name indicator */}
-      {isUploading && fileName && (
-        <p className="text-xs text-slate-500">Uploading: {fileName}</p>
-      )}
+          {/* File name indicator */}
+          {isUploading && fileName && (
+            <p className="text-xs text-slate-500">Uploading: {fileName}</p>
+          )}
 
-      {/* Success banner */}
-      {status === 'success' && successMessage && (
-        <div className="rounded-lg border border-green-200 bg-green-50 p-3">
-          <p className="text-sm font-medium text-green-700">{successMessage}</p>
-        </div>
-      )}
+          {/* Success banner */}
+          {status === 'success' && successMessage && (
+            <div className="rounded-lg border border-green-200 bg-green-50 p-3">
+              <p className="text-sm font-medium text-green-700">{successMessage}</p>
+            </div>
+          )}
 
-      {/* Error banner */}
-      {status === 'error' && errorMessage && (
-        <div className="rounded-lg border border-red-200 bg-red-50 p-3">
-          <p className="text-sm text-red-700">{errorMessage}</p>
-        </div>
+          {/* Error banner */}
+          {status === 'error' && errorMessage && (
+            <div className="rounded-lg border border-red-200 bg-red-50 p-3">
+              <p className="text-sm text-red-700">{errorMessage}</p>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
